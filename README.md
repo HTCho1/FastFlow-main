@@ -22,21 +22,10 @@ The MVTec-AD dataset is organized as follows:
     dataset-path/bottle/ground_truth/defect-type/    # GT    (abnormal)
 
 ## Train
-ResNet-18
+Use ResNet-18 as example
 
     python main.py -cfg configs/resnet18.yaml --data_path path/to/dataset -cat category --batch_size 32 --lr 1e-3 --wd 1e-5 --epochs 500
 
-Wide ResNet50_2
-
-    python main.py -cfg configs/wide_resnet50_2.yaml --data_path path/to/dataset -cat category --batch_size 32 --lr 1e-3 --wd 1e-5 --epochs 500
-
-CaiT
-
-    python main.py -cfg configs/cait.yaml --data_path path/to/dataset -cat category --batch_size 32 --lr 1e-3 --wd 1e-5 --epochs 500
-
-DeiT
-
-    python main.py -cfg configs/deit.yaml --data_path path/to/dataset -cat category --batch_size 32 --lr 1e-3 --wd 1e-5 --epochs 500
 
 ## Evaluate
 
@@ -44,4 +33,5 @@ DeiT
 
 
 ## Sample Results
-
+![pill](./images/pill_17.png)
+![hazelnut](./images/hazelnut_21.png)
