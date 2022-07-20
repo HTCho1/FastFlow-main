@@ -29,6 +29,7 @@ Use ResNet-18 as example
 
 
 ## Evaluate
+You can also show the result images in _visualizations_ folder.
 
     python main.py -cfg configs/resnet18.yaml --data_path path/to/dataset -cat category -ckpt _fastflow_experiment_checkpoints/exp[index]/[epoch#] --eval
 
