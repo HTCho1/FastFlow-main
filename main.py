@@ -144,35 +144,24 @@ def eval_once(model, dataloader, epoch, args):
         targets = target.flatten().type(torch.int32)
         auroc_metric.update((outputs_, targets))
 
-        anomaly_map = outputs.clone()
-        test_imgs.extend(data.cpu().detach().numpy())
-        gt_mask_list.extend(target.cpu().detach().numpy())
-        heatmap = torch.mean(anomaly_map, dim=1)
-        heatmaps = torch.cat((heatmaps, heatmap), dim=0) if heatmaps is not None else heatmap
-
-    heatmaps = heatmaps.numpy()
-    heatmaps = gaussian_smooth(heatmaps, sigma=4)
-
-    scores = rescale(heatmaps)
-    scores = scores
-
-    gt_mask = np.asarray(gt_mask_list).astype(np.int32)
-    threshold = get_threshold(gt_mask, scores)
-
-    class_name = args.category
-
+        if args.eval:
+            anomaly_map = outputs.clone()
+            test_imgs.extend(data.cpu().detach().numpy())
+            gt_mask_list.extend(target.cpu().detach().numpy())
+            heatmap = torch.mean(anomaly_map, dim=1)
+            heatmaps = torch.cat((heatmaps, heatmap), dim=0) if heatmaps is not None else heatmap
     if args.eval:
+        heatmaps = heatmaps.numpy()
+        heatmaps = gaussian_smooth(heatmaps, sigma=4)
+
+        scores = rescale(heatmaps)
+        scores = scores
+
+        gt_mask = np.asarray(gt_mask_list).astype(np.int32)
+        threshold = get_threshold(gt_mask, scores)
+
+        class_name = args.category
         save_dir = 'visualizations/{}_{}'.format(class_name, epoch)
-        os.makedirs(save_dir, exist_ok=True)
-        plot_fig(test_imgs, scores, gt_mask_list, threshold, save_dir, class_name)
-    else:
-        save_dir = os.path.join(
-            const.CHECKPOINT_DIR.format(args.category),
-            "{}/visualizations/{}epoch".format(
-                os.listdir(const.CHECKPOINT_DIR.format(args.category))[-1],
-                epoch + 1
-            )
-        )
         os.makedirs(save_dir, exist_ok=True)
         plot_fig(test_imgs, scores, gt_mask_list, threshold, save_dir, class_name)
 
