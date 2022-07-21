@@ -14,7 +14,8 @@ import fastflow
 import dataset
 import constants as const
 from loss import FastFlowLoss
-from save_plot import plot_fig
+from utils.save_plot import plot_fig
+from utils.metric import *
 
 warnings.filterwarnings("ignore", category=UserWarning)
 use_cuda = torch.cuda.is_available()
@@ -38,27 +39,6 @@ class AverageMeter:
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-
-
-def gaussian_smooth(x, sigma=4):
-    bs = x.shape[0]
-    for i in range(0, bs):
-        x[i] = gaussian_filter(x[i], sigma=sigma)
-    return x
-
-
-def rescale(x):
-    return (x - x.min()) / (x.max() - x.min())
-
-
-def get_threshold(gt, score):
-    gt_mask = np.asarray(gt)
-    precision, recall, thresholds = precision_recall_curve(gt_mask.flatten(), score.flatten())
-    a = 2 * precision * recall
-    b = precision + recall
-    f1 = np.divide(a, b, out=np.zeros_like(a), where=b != 0)
-    threshold = thresholds[np.argmax(f1)]
-    return threshold
 
 
 def build_trainloader(args, config):
@@ -133,9 +113,11 @@ def train_one_epoch(model, dataloader, criterion, optimizer, epoch):
 
 def eval_once(model, dataloader, epoch, args):
     model.eval()
+    total_roc_auc, total_pxl_roc_auc = list(), list()
+    best_img_roc, best_pxl_roc = -1, -1
     auroc_metric = metrics.ROC_AUC()
-    test_imgs, gt_mask_list, heatmaps = list(), list(), None
-    for data, target in dataloader:
+    test_imgs, gt_list, gt_mask_list, heatmaps = list(), list(), list(), None
+    for data, y, target in dataloader:
         data, target = data.cuda(), target.cuda()
         with torch.no_grad():
             outputs = model(data)
@@ -144,22 +126,33 @@ def eval_once(model, dataloader, epoch, args):
         targets = target.flatten().type(torch.int32)
         auroc_metric.update((outputs_, targets))
 
-        if args.eval:
-            anomaly_map = outputs.clone()
-            test_imgs.extend(data.cpu().detach().numpy())
-            gt_mask_list.extend(target.cpu().detach().numpy())
-            heatmap = torch.mean(anomaly_map, dim=1)
-            heatmaps = torch.cat((heatmaps, heatmap), dim=0) if heatmaps is not None else heatmap
+        # if args.eval:
+        anomaly_map = outputs.clone()
+        test_imgs.extend(data.cpu().detach().numpy())
+        gt_list.extend(np.asarray(y))
+        gt_mask_list.extend(target.cpu().detach().numpy())
+        heatmap = torch.mean(anomaly_map, dim=1)
+        heatmaps = torch.cat((heatmaps, heatmap), dim=0) if heatmaps is not None else heatmap
+
+    # if args.eval:
+    heatmaps = heatmaps.numpy()
+    heatmaps = gaussian_smooth(heatmaps, sigma=4)
+
+    scores = rescale(heatmaps)
+    scores = scores
+
+    gt_mask = np.asarray(gt_mask_list).astype(np.int32)
+    threshold = get_threshold(gt_mask, scores)
+
+    '''Image-level AUROC'''
+    fpr, tpr, img_roc_auc = cal_img_roc(scores, gt_list)
+    best_img_roc = img_roc_auc if img_roc_auc > best_img_roc else best_img_roc
+
+    '''Pixel-level AUROC'''
+    fpr, tpr, per_pxl_rocauc = cal_pxl_roc(gt_mask, scores)
+    best_pxl_roc = per_pxl_rocauc if per_pxl_rocauc > best_pxl_roc else best_pxl_roc
+
     if args.eval:
-        heatmaps = heatmaps.numpy()
-        heatmaps = gaussian_smooth(heatmaps, sigma=4)
-
-        scores = rescale(heatmaps)
-        scores = scores
-
-        gt_mask = np.asarray(gt_mask_list).astype(np.int32)
-        threshold = get_threshold(gt_mask, scores)
-
         class_name = args.category
         save_dir = 'visualizations/{}_{}'.format(class_name, epoch)
         os.makedirs(save_dir, exist_ok=True)
@@ -167,6 +160,8 @@ def eval_once(model, dataloader, epoch, args):
 
     auroc = auroc_metric.compute()
     print("AUROC: {}".format(auroc))
+    print('[{} / {}] Image ROCAUC: {:.5f} | best: {:.5f}'.format(epoch, args.epochs, img_roc_auc, best_img_roc))
+    print('[{} / {}] Pixel ROCAUC: {:.5f} | best: {:.5f}'.format(epoch, args.epochs, per_pxl_rocauc, best_pxl_roc))
 
 
 def train(args):

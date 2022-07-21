@@ -40,15 +40,17 @@ class MVTecDataset(torch.utils.data.Dataset):
             return image
         else:
             if os.path.dirname(image_file).endswith("good"):
+                y = torch.zeros([1])
                 target = torch.zeros([1, image.shape[-2], image.shape[-1]])
             else:
+                y = torch.ones([1])
                 target = Image.open(
                     image_file.replace("/test/", "/ground_truth/").replace(
                         ".png", "_mask.png"
                     )
                 )
                 target = self.target_transform(target)
-            return image, target
+            return image, y, target
 
     def __len__(self):
         return len(self.image_files)
