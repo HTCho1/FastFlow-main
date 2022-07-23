@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 import torch.optim
 import yaml
+from tqdm import tqdm
 from ignite.contrib import metrics
 from scipy.ndimage import gaussian_filter
 from sklearn.metrics import precision_recall_curve
@@ -41,10 +42,10 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
 
-def build_trainloader(args, config):
+def build_trainloader(class_name, args, config):
     train_dataset = dataset.MVTecDataset(
         root=args.data_path,
-        category=args.category,
+        category=class_name,
         input_size=config["input_size"],
         is_train=True
     )
@@ -57,10 +58,10 @@ def build_trainloader(args, config):
     )
 
 
-def build_testloader(args, config):
+def build_testloader(class_name, args, config):
     test_dataset = dataset.MVTecDataset(
         root=args.data_path,
-        category=args.category,
+        category=class_name,
         input_size=config["input_size"],
         is_train=False
     )
@@ -90,7 +91,7 @@ def build_model(config):
     return model
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, epoch):
+def train_one_epoch(model, dataloader, criterion, optimizer):
     model.train()
     loss_meter = AverageMeter()
     for step, data in enumerate(dataloader):
@@ -103,18 +104,21 @@ def train_one_epoch(model, dataloader, criterion, optimizer, epoch):
         optimizer.step()
 
         loss_meter.update(loss.item())
+        '''
         if (step + 1) % const.LOG_INTERVAL == 0 or (step + 1) == len(dataloader):
             print(
                 "Epoch {} - Step {}: loss = {:.3f}({:.3f})".format(
                     epoch + 1, step + 1, loss_meter.val, loss_meter.avg
                 )
             )
+        '''
 
 
-def eval_once(model, dataloader, epoch, args):
+def eval_once(model, dataloader, epoch, best_roc_dict, args):
     model.eval()
-    total_roc_auc, total_pxl_roc_auc = list(), list()
-    best_img_roc, best_pxl_roc = -1, -1
+    print('best_roc_dict {}'.format(best_roc_dict))
+    # print('best_img_roc: {}, best_pxl_roc: {}'.format(best_img_roc, best_pxl_roc))
+    # print('total_image_roc_auc: {}, total_pixel_roc_auc: {}'.format(total_image_roc_auc, total_pixel_roc_auc))
     auroc_metric = metrics.ROC_AUC()
     test_imgs, gt_list, gt_mask_list, heatmaps = list(), list(), list(), None
     for data, y, target in dataloader:
@@ -143,15 +147,16 @@ def eval_once(model, dataloader, epoch, args):
 
     gt_mask = np.asarray(gt_mask_list).astype(np.int32)
     threshold = get_threshold(gt_mask, scores)
-
+    # print('best_img_roc: {}, best_pxl_roc: {}'.format(best_img_roc, best_pxl_roc))
     '''Image-level AUROC'''
     fpr, tpr, img_roc_auc = cal_img_roc(scores, gt_list)
-    best_img_roc = img_roc_auc if img_roc_auc > best_img_roc else best_img_roc
+    best_roc_dict['best_img_roc'] = img_roc_auc if img_roc_auc > best_roc_dict['best_img_roc'] else best_roc_dict['best_img_roc']
 
     '''Pixel-level AUROC'''
     fpr, tpr, per_pxl_rocauc = cal_pxl_roc(gt_mask, scores)
-    best_pxl_roc = per_pxl_rocauc if per_pxl_rocauc > best_pxl_roc else best_pxl_roc
-
+    best_roc_dict['best_pxl_roc'] = per_pxl_rocauc if per_pxl_rocauc > best_roc_dict['best_pxl_roc'] else best_roc_dict['best_pxl_roc']
+    # total_image_roc_auc.append(img_roc_auc)
+    # total_pixel_roc_auc.append(per_pxl_rocauc)
     if args.eval:
         class_name = args.category
         save_dir = 'visualizations/{}_{}'.format(class_name, epoch)
@@ -159,12 +164,18 @@ def eval_once(model, dataloader, epoch, args):
         plot_fig(test_imgs, scores, gt_mask_list, threshold, save_dir, class_name)
 
     auroc = auroc_metric.compute()
-    print("AUROC: {}".format(auroc))
-    print('[{} / {}] Image ROCAUC: {:.5f} | best: {:.5f}'.format(epoch, args.epochs, img_roc_auc, best_img_roc))
-    print('[{} / {}] Pixel ROCAUC: {:.5f} | best: {:.5f}'.format(epoch, args.epochs, per_pxl_rocauc, best_pxl_roc))
+    
+    print("\nAUROC: {}".format(auroc))
+    print('[{} / {}] Image ROCAUC: {:.5f} | best: {:.5f}'.format(
+        epoch + 1, args.epochs, img_roc_auc, best_roc_dict['best_img_roc'])
+    )
+    print('[{} / {}] Pixel ROCAUC: {:.5f} | best: {:.5f}'.format(
+        epoch + 1, args.epochs, per_pxl_rocauc, best_roc_dict['best_pxl_roc'])
+    )
 
 
 def train(args):
+    class_names = dataset.CLASS_NAMES if args.category == "all" else [args.category]
     # temp_checkpoint_dir = const.CHECKPOINT_DIR.format(args.category)
     os.makedirs(const.CHECKPOINT_DIR.format(args.category), exist_ok=True)
     checkpoint_dir = os.path.join(
@@ -178,27 +189,33 @@ def train(args):
     criterion = FastFlowLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
 
-    train_dataloader = build_trainloader(args, config)
-    test_dataloader = build_testloader(args, config)
+    # train_dataloader = build_trainloader(args, config)
+    # test_dataloader = build_testloader(args, config)
     model.cuda()
-
-    for epoch in range(args.epochs):
-        train_one_epoch(model, train_dataloader, criterion, optimizer, epoch)
-        if (epoch + 1) % const.EVAL_INTERVAL == 0:
-            eval_once(model, test_dataloader, epoch, args)
-        if (epoch + 1) % const.CHECKPOINT_INTERVAL == 0:
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict()
-                },
-                os.path.join(checkpoint_dir, "%s_%d.pt" % (args.category, epoch + 1))
-            )
+    # best_roc_dict = {"best_img_roc": -1, "best_pxl_roc": -1}
+    # best_img_roc = -1
+    # best_pxl_roc = -1
+    for class_name in class_names:
+        best_roc_dict = {"best_img_roc": -1, "best_pxl_roc": -1}
+        train_dataloader = build_trainloader(class_name, args, config)
+        test_dataloader = build_testloader(class_name, args, config)
+        for epoch in tqdm(range(args.epochs), "{} ".format(class_name)):
+            train_one_epoch(model, train_dataloader, criterion, optimizer)
+            if (epoch + 1) % const.EVAL_INTERVAL == 0:
+                eval_once(model, test_dataloader, epoch, best_roc_dict, args)
+            if (epoch + 1) % const.CHECKPOINT_INTERVAL == 0:
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict()
+                    },
+                    os.path.join(checkpoint_dir, "%s_%d.pt" % (args.category, epoch + 1))
+                )
 
 
 def evaluate(args):
-    epoch = int(args.checkpoint.split('.')[0])
+    epoch = int(args.checkpoint.split('.')[0].split('_')[-1])
     config = yaml.safe_load(open(args.config, "r"))
     model = build_model(config)
     checkpoint = torch.load(args.checkpoint)

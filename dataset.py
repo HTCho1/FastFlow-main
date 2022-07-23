@@ -6,6 +6,10 @@ import torch.utils.data
 from PIL import Image
 from torchvision import transforms
 
+CLASS_NAMES = ['bottle', 'cable', 'capsule', 'carpet', 'grid', 'gunji1',
+               'hazelnut', 'leather', 'metal_nut', 'pill', 'screw',
+               'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
+
 
 class MVTecDataset(torch.utils.data.Dataset):
     def __init__(self, root, category, input_size, is_train=True):
@@ -34,7 +38,7 @@ class MVTecDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         image_file = self.image_files[index]
-        image = Image.open(image_file)
+        image = Image.open(image_file).convert('RGB')
         image = self.transforms(image)
         if self.is_train:
             return image
@@ -45,7 +49,7 @@ class MVTecDataset(torch.utils.data.Dataset):
             else:
                 y = torch.ones([1])
                 target = Image.open(
-                    image_file.replace("/test/", "/ground_truth/").replace(
+                    image_file.replace("\\test\\", "\\ground_truth\\").replace(
                         ".png", "_mask.png"
                     )
                 )
