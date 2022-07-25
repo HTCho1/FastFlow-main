@@ -7,9 +7,6 @@ import numpy as np
 import torch.optim
 import yaml
 from tqdm import tqdm
-from ignite.contrib import metrics
-from scipy.ndimage import gaussian_filter
-from sklearn.metrics import precision_recall_curve
 
 import fastflow
 import dataset
@@ -116,10 +113,9 @@ def train_one_epoch(model, dataloader, criterion, optimizer):
 
 def eval_once(model, dataloader, epoch, best_roc_dict, args):
     model.eval()
-    print('best_roc_dict {}'.format(best_roc_dict))
+    # print('best_roc_dict {}'.format(best_roc_dict))
     # print('best_img_roc: {}, best_pxl_roc: {}'.format(best_img_roc, best_pxl_roc))
     # print('total_image_roc_auc: {}, total_pixel_roc_auc: {}'.format(total_image_roc_auc, total_pixel_roc_auc))
-    auroc_metric = metrics.ROC_AUC()
     test_imgs, gt_list, gt_mask_list, heatmaps = list(), list(), list(), None
     for data, y, target in dataloader:
         data, target = data.cuda(), target.cuda()
@@ -128,7 +124,6 @@ def eval_once(model, dataloader, epoch, best_roc_dict, args):
         outputs = outputs.cpu().detach()
         outputs_ = outputs.flatten()
         targets = target.flatten().type(torch.int32)
-        auroc_metric.update((outputs_, targets))
 
         # if args.eval:
         anomaly_map = outputs.clone()
@@ -163,9 +158,6 @@ def eval_once(model, dataloader, epoch, best_roc_dict, args):
         os.makedirs(save_dir, exist_ok=True)
         plot_fig(test_imgs, scores, gt_mask_list, threshold, save_dir, class_name)
 
-    auroc = auroc_metric.compute()
-    
-    print("\nAUROC: {}".format(auroc))
     print('[{} / {}] Image ROCAUC: {:.5f} | best: {:.5f}'.format(
         epoch + 1, args.epochs, img_roc_auc, best_roc_dict['best_img_roc'])
     )
@@ -215,14 +207,18 @@ def train(args):
 
 
 def evaluate(args):
+    class_names = dataset.CLASS_NAMES if args.category == "all" else [args.category]
     epoch = int(args.checkpoint.split('.')[0].split('_')[-1])
     config = yaml.safe_load(open(args.config, "r"))
+    print('config:', config)
     model = build_model(config)
     checkpoint = torch.load(args.checkpoint)
     model.load_state_dict(checkpoint["model_state_dict"])
-    test_dataloader = build_testloader(args, config)
-    model.cuda()
-    eval_once(model, test_dataloader, epoch, args)
+    for class_name in class_names:
+        best_roc_dict = {"best_img_roc": -1, "best_pxl_roc": -1}
+        test_dataloader = build_testloader(class_name, args, config)
+        model.cuda()
+        eval_once(model, test_dataloader, epoch, best_roc_dict, args)
 
 
 def parse_args():
